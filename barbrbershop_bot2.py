@@ -18,7 +18,6 @@ NAME, PHONE, SERVICE, RETURN_TIME, FILTER_NAME_INPUT, FILTER_PHONE_INPUT, FILTER
 
 # Inicializa o arquivo de dados dos clientes
 data_file = "clients_data.json"
-barbers_data_file = "barbers_data.json"
 
 def save_data(clients_data):
     with open(data_file, "w") as f:
@@ -38,8 +37,7 @@ clients_data = load_data()
 def start(update: Update, context: CallbackContext):
     keyboard = [
         [
-            InlineKeyboardButton("Cadastrar Cliente", callback_data='cadastrar_cliente'),
-            InlineKeyboardButton("Cadastrar Barbeiro", callback_data='cadastrar_barbeiro'),
+            InlineKeyboardButton("Cadastrar", callback_data='cadastrar'),
             InlineKeyboardButton("Filtrar por nome", callback_data='filter_name'),
             InlineKeyboardButton("Filtrar por telefone", callback_data='filter_phone'),
         ],
@@ -52,7 +50,6 @@ def start(update: Update, context: CallbackContext):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     update.message.reply_text("Por favor, escolha uma opção:", reply_markup=reply_markup)
-
 
 
 def add_client(update: Update, context: CallbackContext):
@@ -100,46 +97,6 @@ def check_returns(update: Update, context: CallbackContext):
         update.message.reply_text(message)
     else:
         update.message.reply_text("Nenhum cliente para entrar em contato no momento.")
-
-
-def save_barbers_data(barbers_data):
-    with open(barbers_data_file, "w") as f:
-        json.dump(barbers_data, f, ensure_ascii=False, indent=4)
-
-
-def load_barbers_data():
-    try:
-        with open(barbers_data_file, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-barbers_data = load_barbers_data()
-
-# Adicione uma função para cadastrar um barbeiro
-def cadastrar_barbeiro(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-
-    query.edit_message_text("Vamos cadastrar um novo barbeiro.\nPor favor, digite o nome do barbeiro:")
-    return NAME  # Reutilize o estado NAME
-
-# Adicione um manipulador para a função cadastrar_barbeiro
-def barber_name_handler(update: Update, context: CallbackContext):
-    name = update.message.text
-    barber_id = str(uuid.uuid4())
-
-    if barber_id not in barbers_data:
-        barbers_data[barber_id] = {
-            "name": name,
-        }
-        save_barbers_data(barbers_data)
-        update.message.reply_text("Barbeiro cadastrado com sucesso!")
-    else:
-        update.message.reply_text("Barbeiro já cadastrado.")
-
-    return ConversationHandler.END
-
 
 #---------------------Funções de Cadastro---------------------#
 
@@ -190,47 +147,9 @@ def service_handler(update: Update, context: CallbackContext):
     service = query.data
     context.user_data['client_info']['service'] = service
 
-    # Crie o teclado inline com as opções de barbeiros
-    barber_keyboard = [[InlineKeyboardButton(barber["name"], callback_data=barber_id)] for barber_id, barber in barbers_data.items()]
-    reply_markup = InlineKeyboardMarkup(barber_keyboard)
-
-    # Envie a mensagem com o teclado inline
-    query.edit_message_text("Por favor, escolha um barbeiro:", reply_markup=reply_markup)
-    return BARBER
-
-def barber_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    barber_id = query.data
-    context.user_data['client_info']['barber_id'] = barber_id
-    barber_name = barbers_data[barber_id]['name']
-    query.edit_message_text(f"Barbeiro selecionado: {barber_name}\n\nPor favor, digite o tempo de retorno (em dias):")
+    # Atualize a mensagem com a seleção do usuário
+    query.edit_message_text(f"Serviço selecionado: {service}\nDigite o tempo para retorno (em dias):")
     return RETURN_TIME
-
-# Atualize o manipulador para incluir o estado BARBER
-conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(cadastrar_cliente, pattern='^' + str("cadastrar_cliente") + '$')],
-    states={
-        NAME: [MessageHandler(Filters.text & ~Filters.command, name_handler)],
-        PHONE: [MessageHandler(Filters.text & ~Filters.command, phone_handler)],
-        SERVICE: [CallbackQueryHandler(service_handler)],
-        BARBER: [CallbackQueryHandler(barber_handler)],
-        RETURN_TIME: [MessageHandler(Filters.text & ~Filters.command, return_time_handler)],
-    },
-    fallbacks=[CommandHandler('cancel', cancel)],
-)
-
-dispatcher.add_handler(conv_handler)
-
-# Adicione um novo manipulador de conversa para cadastrar barbeiros
-barber_conv_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(cadastrar_barbeiro, pattern='^' + str("cadastrar_barbeiro") + '$')],
-    states={
-        NAME: [MessageHandler(Filters.text & ~Filters.command, barber_name_handler)],
-    },
-    fallbacks=[CommandHandler('cancel', cancel)],
-)
-
-dispatcher.add_handler(barber_conv_handler)
 
 
 def return_time_handler(update: Update, context: CallbackContext):
