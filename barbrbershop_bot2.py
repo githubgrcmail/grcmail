@@ -8,14 +8,20 @@ from telegram.ext import ConversationHandler, Filters
 import uuid
 import logging
 
+
 logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = "6128472055:AAFJTQjSxd2pM4PQL2DWb7rua6WuTSihpuk"
 FILTER_NAME_INPUT = 99
 FILTER_PHONE_INPUT = 100
 FILTER_SERVICE_INPUT = 101
 FILTER_RETURN_TIME_INPUT = 102
-NAME, PHONE, SERVICE, RETURN_TIME, FILTER_NAME_INPUT, FILTER_PHONE_INPUT, FILTER_SERVICE_INPUT, FILTER_RETURN_TIME_INPUT = range(8)
+NAME, PHONE, RETURN_TIME, FILTER_NAME_INPUT, FILTER_PHONE_INPUT, FILTER_SERVICE_INPUT, FILTER_RETURN_TIME_INPUT = range(7)
 ADD_SERVICE, ADD_BARBER, BARBER_NAME, BARBER_PHONE, BARBER_BIRTHDAY = range(103, 108)
+ADD_SERVICE_NAME = 7
+# Constante de estado
+SERVICE = 3
+BARBER = 6
+
 
 # Inicializa o arquivo de dados dos clientes
 data_file = "clients_data.json"
@@ -54,31 +60,21 @@ def start(update: Update, context: CallbackContext):
 
 
 def add_client(update: Update, context: CallbackContext):
-    message = update.message.text
-    message_parts = message.split(",")
+    update.message.reply_text("Digite o nome do cliente:")
 
-    if len(message_parts) != 4:
-        update.message.reply_text(
-            "Formato incorreto. Por favor, envie as informações no seguinte formato:\n"
-            "/addclient Nome, Telefone, Serviço, Dias para retorno"
-        )
-        return
+    with open('barbers.json', 'r') as f:
+        barbers_data = json.load(f)
 
-    name, phone, service, days = [part.strip() for part in message_parts]
-    client_id = str(update.message.from_user.id) + "_" + phone
+    keyboard = [
+        [InlineKeyboardButton(barber["name"], callback_data=barber["id"])] for barber in barbers_data
+    ]
 
-    if client_id not in clients_data:
-        clients_data[client_id] = {
-            "name": name,
-            "phone": phone,
-            "service": service,
-            "return_days": int(days),
-            "last_visit": str(datetime.now())
-        }
-        save_data(clients_data)
-        update.message.reply_text("Cliente cadastrado com sucesso!")
-    else:
-        update.message.reply_text("Cliente já cadastrado.")
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    update.message.reply_text("Escolha um barbeiro:", reply_markup=reply_markup)
+
+    return NAME
+
 
 
 def check_returns(update: Update, context: CallbackContext):
@@ -134,6 +130,7 @@ def phone_handler(update: Update, context: CallbackContext):
             InlineKeyboardButton("Barba", callback_data="Barba"),
             InlineKeyboardButton("Corte", callback_data="Corte"),
             InlineKeyboardButton("Barba e Corte", callback_data="Barba e Corte")
+            
         ]
     ]
     reply_markup = InlineKeyboardMarkup(service_keyboard)
@@ -142,27 +139,65 @@ def phone_handler(update: Update, context: CallbackContext):
     update.message.reply_text("Selecione o serviço utilizado:", reply_markup=reply_markup)
     return SERVICE
 
+def service_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    service = query.data
+    context.user_data['client_info']['service'] = service
+
+    query.edit_message_text(f"Serviço selecionado: {service}\nDigite o tempo para retorno (em dias):")
+    return RETURN_TIME
+
+
 
 def add_service(update: Update, context: CallbackContext):
     update.message.reply_text("Digite o nome do novo serviço:")
     return ADD_SERVICE
 
 
-def save_service(update, context):
-    service_name = context.user_data['service_name']
+def save_service(update: Update, context: CallbackContext):
+    service_name = update.message.text
+    logging.info(f"Adicionando o serviço {service_name}")
     try:
         with open('services.json', 'r') as f:
             try:
                 data = json.load(f)
             except json.JSONDecodeError:
+                logging.warning("JSONDecodeError, criando uma nova lista de serviços")
                 data = {"services": []}
     except FileNotFoundError:
+        logging.warning("services.json não encontrado, criando um novo arquivo")
         data = {"services": []}
 
     data["services"].append(service_name)
 
     with open('services.json', 'w') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+        logging.info("Serviço adicionado e arquivo services.json atualizado")
+
+    update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
+    return ConversationHandler.END
+
+def barber_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    barber_id = query.data
+    context.user_data['client_info']['barber_id'] = barber_id
+
+    query.edit_message_text(f"Barbeiro selecionado: {barber_id}\nSelecione um serviço:")
+
+    with open('services.json', 'r') as f:
+        services_data = json.load(f)
+
+    keyboard = [
+        [InlineKeyboardButton(service, callback_data=service)] for service in services_data["services"]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    update.effective_message.reply_text("Escolha um serviço:", reply_markup=reply_markup)
+
+    return SERVICE
+
+
 
 
 
@@ -211,14 +246,26 @@ def save_barber_info(barber_info):
 
 
 
-def service_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    service = query.data
-    context.user_data['client_info']['service'] = service
+def service_name_handler(update: Update, context: CallbackContext):
+    service_name = update.message.text
+    context.user_data['service_name'] = service_name
 
-    # Atualize a mensagem com a seleção do usuário
-    query.edit_message_text(f"Serviço selecionado: {service}\nDigite o tempo para retorno (em dias):")
-    return RETURN_TIME
+    # Salve o serviço no arquivo JSON
+    with open("services.json", "r+") as f:
+        data = json.load(f)
+        data["services"].append(service_name)
+        f.seek(0)
+        json.dump(data, f, ensure_ascii=False, indent=4)
+        f.truncate()
+
+    update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
+    return ConversationHandler.END
+
+def cancel(update: Update, context: CallbackContext):
+    logging.warning("Função cancel chamada")
+    user = update.effective_user
+    update.message.reply_text("Operação cancelada.")
+    return ConversationHandler.END
 
 
 
@@ -399,13 +446,19 @@ def main():
             CallbackQueryHandler(filter_by_return_time, pattern="filter_return_time"),
             CommandHandler("addservice", add_service),
             CommandHandler("addbarber", add_barber),
+            CommandHandler("cancel", cancel)
         ],
         states={
+
+            
             NAME: [
                 MessageHandler(Filters.text, name_handler),
             ],
             PHONE: [
                 MessageHandler(Filters.text, phone_handler),
+            ],
+            BARBER: [
+            CallbackQueryHandler(barber_handler),
             ],
             SERVICE: [
                 CallbackQueryHandler(service_handler),
