@@ -21,6 +21,8 @@ ADD_SERVICE_NAME = 7
 # Constante de estado
 SERVICE = 3
 BARBER = 6
+BIRTHDAY = 7
+LAST_CUT_DATE = 8
 
 
 # Inicializa o arquivo de dados dos clientes
@@ -60,20 +62,13 @@ def start(update: Update, context: CallbackContext):
 
 
 def add_client(update: Update, context: CallbackContext):
-    update.message.reply_text("Digite o nome do cliente:")
-
-    with open('barbers.json', 'r') as f:
-        barbers_data = json.load(f)
-
-    keyboard = [
-        [InlineKeyboardButton(barber["name"], callback_data=barber["id"])] for barber in barbers_data
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    update.message.reply_text("Escolha um barbeiro:", reply_markup=reply_markup)
-
+    update.message.reply_text("Vamos cadastrar um novo cliente. Digite o nome do cliente:")
+    client_id = uuid.uuid4().hex
+    registration_date = datetime.now().strftime('%Y-%m-%d')
+    context.user_data['client_info'] = {'id': client_id, 'registration_date': registration_date}
     return NAME
+
+
 
 
 
@@ -123,29 +118,22 @@ def name_handler(update: Update, context: CallbackContext):
 def phone_handler(update: Update, context: CallbackContext):
     phone = update.message.text
     context.user_data['client_info']['phone'] = phone
+    update.message.reply_text(f"Telefone registrado: {phone}")
 
-    # Crie o teclado inline com as opções de serviços
-    service_keyboard = [
-        [
-            InlineKeyboardButton("Barba", callback_data="Barba"),
-            InlineKeyboardButton("Corte", callback_data="Corte"),
-            InlineKeyboardButton("Barba e Corte", callback_data="Barba e Corte")
-            
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(service_keyboard)
+    barbers = load_barbers()
+    barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
+    reply_markup = InlineKeyboardMarkup(barbers_keyboard)
+    update.message.reply_text("Selecione o barbeiro do cliente:", reply_markup=reply_markup)
+    return BARBER
 
-    # Envie a mensagem com o teclado inline
-    update.message.reply_text("Selecione o serviço utilizado:", reply_markup=reply_markup)
-    return SERVICE
 
 def service_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    service = query.data
+    service = query.data.split(':')[1]
     context.user_data['client_info']['service'] = service
 
-    query.edit_message_text(f"Serviço selecionado: {service}\nDigite o tempo para retorno (em dias):")
-    return RETURN_TIME
+    query.edit_message_text(f"Serviço selecionado: {service}\nDigite a data do último corte (AAAA-MM-DD):")
+    return LAST_CUT_DATE
 
 
 
@@ -177,28 +165,57 @@ def save_service(update: Update, context: CallbackContext):
     update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
     return ConversationHandler.END
 
+def load_barbers():
+    try:
+        with open('barbers.json', 'r') as f:
+            barbers = json.load(f)
+    except FileNotFoundError:
+        barbers = []
+
+    return barbers
+
+def load_services():
+    try:
+        with open('services.json', 'r') as f:
+            try:
+                data = json.load(f)
+                return data["services"]
+            except json.JSONDecodeError:
+                return []
+    except FileNotFoundError:
+        return []
+
+
 def barber_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    barber_id = query.data
-    context.user_data['client_info']['barber_id'] = barber_id
+    query.answer()
 
-    query.edit_message_text(f"Barbeiro selecionado: {barber_id}\nSelecione um serviço:")
+    barber_id = int(query.data.split(":")[1])
+    context.user_data['client_info']['barber'] = barber_id
 
-    with open('services.json', 'r') as f:
-        services_data = json.load(f)
+    # Load services for selection
+    services = load_services()
+    services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
 
-    keyboard = [
-        [InlineKeyboardButton(service, callback_data=service)] for service in services_data["services"]
-    ]
+    reply_markup = InlineKeyboardMarkup(services_keyboard)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    update.effective_message.reply_text("Escolha um serviço:", reply_markup=reply_markup)
+    query.edit_message_text(
+        text="Select the service:",
+        reply_markup=reply_markup
+    )
 
     return SERVICE
 
 
 
+
+
+
+def birthday_handler(update: Update, context: CallbackContext):
+    birthday = update.message.text
+    context.user_data['client_info']['birthday'] = birthday
+    update.message.reply_text(f"Data de nascimento registrada: {birthday}\nDigite o telefone do cliente:")
+    return PHONE
 
 
 
@@ -228,7 +245,7 @@ def barber_birthday_handler(update: Update, context: CallbackContext):
     update.message.reply_text("Barbeiro cadastrado com sucesso!")
     return ConversationHandler.END
 
-def save_barber_info(barber_info):
+def save_barber_info(info):
     try:
         with open('barbers.json', 'r') as f:
             try:
@@ -238,10 +255,17 @@ def save_barber_info(barber_info):
     except FileNotFoundError:
         data = []
 
-    data.append(barber_info)
+    if data:
+        barber_id = max([barber.get("id", 0) for barber in data]) + 1
+    else:
+        barber_id = 1
+
+    info["id"] = barber_id
+    data.append(info)
 
     with open('barbers.json', 'w') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
 
 
 
@@ -438,7 +462,7 @@ def main():
     # Crie o ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
-            
+            CommandHandler('start', start),
             CallbackQueryHandler(cadastrar, pattern="cadastrar"),
             CallbackQueryHandler(filter_by_name, pattern="filter_name"),
             CallbackQueryHandler(filter_by_phone, pattern="filter_phone"),
@@ -449,8 +473,6 @@ def main():
             CommandHandler("cancel", cancel)
         ],
         states={
-
-            
             NAME: [
                 MessageHandler(Filters.text, name_handler),
             ],
@@ -458,7 +480,7 @@ def main():
                 MessageHandler(Filters.text, phone_handler),
             ],
             BARBER: [
-            CallbackQueryHandler(barber_handler),
+                CallbackQueryHandler(barber_handler),
             ],
             SERVICE: [
                 CallbackQueryHandler(service_handler),
@@ -492,10 +514,7 @@ def main():
             ],
         },
         fallbacks=[],
-
-
     )
-
 
     # Adicione o ConversationHandler ao dispatcher
     dp.add_handler(conv_handler)
