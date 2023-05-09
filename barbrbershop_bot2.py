@@ -7,6 +7,8 @@ from telegram.ext import ConversationHandler
 from telegram.ext import ConversationHandler, Filters
 import uuid
 import logging
+import os
+
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ SERVICE = 3
 BARBER = 6
 BIRTHDAY = 7
 LAST_CUT_DATE = 8
+USER_DATA_V2 = "user_data_v2"
 
 
 # Inicializa o arquivo de dados dos clientes
@@ -175,36 +178,32 @@ def load_barbers():
     return barbers
 
 def load_services():
-    try:
+    if os.path.exists('services.json'):
         with open('services.json', 'r') as f:
-            try:
-                data = json.load(f)
-                return data["services"]
-            except json.JSONDecodeError:
+            services = json.load(f)
+            if services:
+                return services
+            else:
+                print("No services found in services.json")
                 return []
-    except FileNotFoundError:
+    else:
+        print("services.json not found.")
         return []
 
 
-def barber_handler(update: Update, context: CallbackContext):
+
+def barber_handler(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     query.answer()
 
     barber_id = int(query.data.split(":")[1])
-    context.user_data['client_info']['barber'] = barber_id
+    context.user_data[USER_DATA_V2]["barber_id"] = barber_id
 
-    # Load services for selection
-    services = load_services()
-    services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
-
-    reply_markup = InlineKeyboardMarkup(services_keyboard)
-
-    query.edit_message_text(
-        text="Select the service:",
-        reply_markup=reply_markup
-    )
+    query.edit_message_text(text=f"Barbeiro selecionado: {barber_id}")
 
     return SERVICE
+
+
 
 
 
