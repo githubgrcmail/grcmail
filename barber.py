@@ -50,6 +50,7 @@ clients_data = load_data()
 def start(update: Update, context: CallbackContext):
     keyboard = [
         [
+            
             InlineKeyboardButton("Cadastrar", callback_data="add_client"),
             InlineKeyboardButton("Filtrar por nome", callback_data='filter_name'),
             InlineKeyboardButton("Filtrar por telefone", callback_data='filter_phone'),
@@ -110,40 +111,48 @@ def phone_handler(update: Update, context: CallbackContext):
     update.message.reply_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
     return BARBER
 
+def load_barbers():
+    try:
+        with open('barbers.json', 'r') as f:
+            barbers = json.load(f)
+    except FileNotFoundError:
+        barbers = []
 
+    return barbers
 def barber_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     callback_data = query.data
 
-    if callback_data == "confirm_barber":
-        # Quando o botão "Confirmar barbeiro" é pressionado, passe para o próximo estado
-        services = load_services()
-        services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
-        services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
-        reply_markup = InlineKeyboardMarkup(services_keyboard)
-        query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
-        return SERVICE
-    else:
-        # Se um barbeiro foi selecionado, salve o id do barbeiro e vá para a seleção de serviços
-        barber_id = int(callback_data.split(':')[1])
-        context.user_data['client_info']['barber_id'] = barber_id
-        query.answer()
+    barber_id = int(callback_data.split(':')[1])
+    context.user_data['client_info']['barber_id'] = barber_id
+    print(f"Barber ID saved: {context.user_data['client_info']['barber_id']}")
+    query.answer()
 
-        barbers = load_barbers()
-        if barber_id not in [barber['id'] for barber in barbers]:
-            query.edit_message_text("O barbeiro selecionado não está mais disponível. Por favor, selecione outro barbeiro.")
-            barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
-            barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])
-            reply_markup = InlineKeyboardMarkup(barbers_keyboard)
-            query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
-            return BARBER
+    barbers = load_barbers()
+    print(f"Loaded barbers: {barbers}")  # log loaded barbers
 
-        services = load_services()
-        services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
-        services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
-        reply_markup = InlineKeyboardMarkup(services_keyboard)
-        query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
-        return SERVICE
+    if barber_id not in [barber['id'] for barber in barbers]:
+        query.edit_message_text("O barbeiro selecionado não está mais disponível. Por favor, selecione outro barbeiro.")
+        barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")]
+                            for barber in barbers]
+        reply_markup = InlineKeyboardMarkup(barbers_keyboard)
+        query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
+        print("Returning to barber selection state")
+        return BARBER
+
+    services = load_services()
+    print(f"Loaded services: {services}")  # log loaded services
+
+    services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")]
+                         for service in services]
+    services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
+    reply_markup = InlineKeyboardMarkup(services_keyboard)
+    query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
+    print("Moving to service selection state")
+    return SERVICE
+
+
+
 
 
 
@@ -165,45 +174,18 @@ def service_handler(update: Update, context: CallbackContext):
         query.answer("Serviço adicionado!")
         return SERVICE
 
- 
-
 def add_service(update: Update, context: CallbackContext) -> int:
     update.message.reply_text("Por favor, envie o nome do serviço.")
     return ADD_SERVICE
-
 def save_service(update: Update, context: CallbackContext) -> int:
     service_name = update.message.text
-    context.user_data['service_info'] = {'name': service_name}
+    context.user_data['service_info'] = {'name': service_name, 'id': str(uuid.uuid4())} # gerando um UUID para o campo 'id'
     save_service_info(context.user_data['service_info'])
     logging.info(f"Adicionando o serviço {service_name}")
-    try:
-        with open('services.json', 'r') as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                logging.warning("JSONDecodeError, criando uma nova lista de serviços")
-                data = {"services": []}
-    except FileNotFoundError:
-        logging.warning("services.json não encontrado, criando um novo arquivo")
-        data = {"services": []}
-
-    data["services"].append(service_name)
-
-    with open('services.json', 'w') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        logging.info("Serviço adicionado e arquivo services.json atualizado")
 
     update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
     return ConversationHandler.END
 
-def load_barbers():
-    try:
-        with open('barbers.json', 'r') as f:
-            barbers = json.load(f)
-    except FileNotFoundError:
-        barbers = []
-
-    return barbers
 
 def load_services():
     if os.path.exists('services.json'):
@@ -268,41 +250,31 @@ def save_barber_info(info):
     with open('barbers.json', 'w') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def save_service_info(info):
+def save_service_info(service_info: dict) -> None:
     try:
         with open('services.json', 'r') as f:
             try:
                 data = json.load(f)
             except json.JSONDecodeError:
-                data = []
+                logging.warning("JSONDecodeError, criando uma nova lista de serviços")
+                data = {"services": []}  # Inicializando "services" como uma lista
     except FileNotFoundError:
-        data = []
+        logging.warning("services.json não encontrado, criando um novo arquivo")
+        data = {"services": []}  # Inicializando "services" como uma lista
 
-    if data:
-        service_id = max([service.get("id", 0) for service in data]) + 1
+    # Gerando um ID único para o serviço
+    if data["services"]:
+        service_id = max([service.get("id", 0) for service in data["services"]]) + 1
     else:
         service_id = 1
 
-    info["id"] = service_id
-    data.append(info)
+    service_info['id'] = service_id
+
+    data["services"].append(service_info)  # Adicionando o dicionário do serviço
 
     with open('services.json', 'w') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
-def service_name_handler(update: Update, context: CallbackContext):
-    service_name = update.message.text
-    context.user_data['service_name'] = service_name
-
-    # Salve o serviço no arquivo JSON
-    with open("services.json", "r+") as f:
-        data = json.load(f)
-        data["services"].append(service_name)
-        f.seek(0)
-        json.dump(data, f, ensure_ascii=False, indent=4)
-        f.truncate()
-
-    update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
-    return ConversationHandler.END
+        logging.info("Serviço adicionado e arquivo services.json atualizado")
 
 def cancel(update: Update, context: CallbackContext):
     logging.warning("Função cancel chamada")
@@ -340,9 +312,12 @@ def save_client_info(client_info):
 def show_main_menu(update: Update, context: CallbackContext):
     menu_keyboard = [
         [InlineKeyboardButton("Cadastrar", url="/add_client")],
+        [InlineKeyboardButton("Cadastrar Barbeiro", url="/addbarber")],
+        [InlineKeyboardButton("Cadastrar Serviço", url="/addservice")],
         [InlineKeyboardButton("Filtrar por Nome", callback_data="filter_name")],
         [InlineKeyboardButton("Filtrar por Telefone", callback_data="filter_phone")],
         [InlineKeyboardButton("Filtrar por Serviço", callback_data="filter_service")],
+        
         [InlineKeyboardButton("Filtrar por Tempo de Retorno", callback_data="filter_return_time")]
     ]
     reply_markup = InlineKeyboardMarkup(menu_keyboard)
@@ -512,6 +487,9 @@ def main():
             SERVICE: [CallbackQueryHandler(service_handler)],
             LAST_CUT_DATE: [MessageHandler(Filters.text, last_cut_date_handler)],
             RETURN_TIME: [MessageHandler(Filters.text, return_time_handler)],
+            
+            
+            
             FILTER_NAME_INPUT: [
                 MessageHandler(Filters.text, filter_name_input)
             ],
