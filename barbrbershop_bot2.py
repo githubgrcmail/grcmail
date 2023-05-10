@@ -73,9 +73,6 @@ def add_client(update: Update, context: CallbackContext):
     return NAME
 
 
-
-
-
 def check_returns(update: Update, context: CallbackContext):
     clients_to_contact = []
 
@@ -127,17 +124,28 @@ def barber_handler(update: Update, context: CallbackContext):
         query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
         return SERVICE
     else:
-        # Se um barbeiro foi selecionado, salve o id do barbeiro e continue a lista de barbeiros
+        # Se um barbeiro foi selecionado, salve o id do barbeiro e vá para a seleção de serviços
         barber_id = int(callback_data.split(':')[1])
         context.user_data['client_info']['barber_id'] = barber_id
         query.answer()
 
         barbers = load_barbers()
-        barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
-        barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])
-        reply_markup = InlineKeyboardMarkup(barbers_keyboard)
-        query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
-        return BARBER
+        if barber_id not in [barber['id'] for barber in barbers]:
+            query.edit_message_text("O barbeiro selecionado não está mais disponível. Por favor, selecione outro barbeiro.")
+            barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
+            barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])
+            reply_markup = InlineKeyboardMarkup(barbers_keyboard)
+            query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
+            return BARBER
+
+        services = load_services()
+        services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
+        services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
+        reply_markup = InlineKeyboardMarkup(services_keyboard)
+        query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
+        return SERVICE
+
+
 
 
 
