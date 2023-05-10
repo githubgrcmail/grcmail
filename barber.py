@@ -311,17 +311,17 @@ def save_client_info(client_info):
 
 def show_main_menu(update: Update, context: CallbackContext):
     menu_keyboard = [
-        [InlineKeyboardButton("Cadastrar", url="/add_client")],
-        [InlineKeyboardButton("Cadastrar Barbeiro", url="/addbarber")],
-        [InlineKeyboardButton("Cadastrar Serviço", url="/addservice")],
+        [InlineKeyboardButton("Cadastrar", callback_data="add_client")],
+        [InlineKeyboardButton("Cadastrar Barbeiro", callback_data="add_barber")],
+        [InlineKeyboardButton("Cadastrar Serviço", callback_data="add_service")],
         [InlineKeyboardButton("Filtrar por Nome", callback_data="filter_name")],
         [InlineKeyboardButton("Filtrar por Telefone", callback_data="filter_phone")],
         [InlineKeyboardButton("Filtrar por Serviço", callback_data="filter_service")],
-        
         [InlineKeyboardButton("Filtrar por Tempo de Retorno", callback_data="filter_return_time")]
     ]
     reply_markup = InlineKeyboardMarkup(menu_keyboard)
     update.message.reply_text("Selecione uma opção:", reply_markup=reply_markup)
+
 
 #---------------------Filtros---------------------#
 
@@ -471,13 +471,14 @@ def main():
         entry_points=[
             CommandHandler('start', start),
             CommandHandler('add_client', add_client),
+            CommandHandler("addservice", add_service),
+            CommandHandler("addbarber", add_barber),
+            CommandHandler("cancel", cancel),
             CallbackQueryHandler(filter_by_name, pattern="filter_name"),
             CallbackQueryHandler(filter_by_phone, pattern="filter_phone"),
             CallbackQueryHandler(filter_by_service, pattern="filter_service"),
-            CallbackQueryHandler(filter_by_return_time, pattern="filter_return_time"),
-            CommandHandler("addservice", add_service),
-            CommandHandler("addbarber", add_barber),
-            CommandHandler("cancel", cancel)
+            CallbackQueryHandler(filter_by_return_time, pattern="filter_return_time")
+          
         ],
         states={
             NAME: [MessageHandler(Filters.text, name_handler)],
