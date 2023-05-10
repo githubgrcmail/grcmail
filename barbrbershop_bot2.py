@@ -10,7 +10,7 @@ import logging
 import os
 
 
-
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = "6128472055:AAFJTQjSxd2pM4PQL2DWb7rua6WuTSihpuk"
 FILTER_NAME_INPUT = 99
@@ -99,7 +99,7 @@ def check_returns(update: Update, context: CallbackContext):
 def name_handler(update: Update, context: CallbackContext):
     name = update.message.text
     context.user_data['client_info']['name'] = name
-    update.message.reply_text("Digite o número de telefone do cliente:")
+    update.message.reply_text("Digite a data de aniversário do cliente:")
     return BIRTHDAY
 
 def phone_handler(update: Update, context: CallbackContext):
@@ -108,29 +108,56 @@ def phone_handler(update: Update, context: CallbackContext):
 
     barbers = load_barbers()
     barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
+    barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])  # Adicione esta linha
     reply_markup = InlineKeyboardMarkup(barbers_keyboard)
-    update.message.reply_text("Selecione o barbeiro do cliente:", reply_markup=reply_markup)
+    update.message.reply_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
     return BARBER
+
 
 def barber_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    barber_id = int(query.data.split(':')[1])
-    context.user_data['client_info']['barber_id'] = barber_id
-    query.answer()
+    callback_data = query.data
 
-    services = load_services()
-    services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
-    reply_markup = InlineKeyboardMarkup(services_keyboard)
-    query.edit_message_text("Selecione o serviço do cliente:", reply_markup=reply_markup)
-    return SERVICE
+    if callback_data == "confirm_barber":
+        # Quando o botão "Confirmar barbeiro" é pressionado, passe para o próximo estado
+        services = load_services()
+        services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")] for service in services]
+        services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
+        reply_markup = InlineKeyboardMarkup(services_keyboard)
+        query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
+        return SERVICE
+    else:
+        # Se um barbeiro foi selecionado, salve o id do barbeiro e continue a lista de barbeiros
+        barber_id = int(callback_data.split(':')[1])
+        context.user_data['client_info']['barber_id'] = barber_id
+        query.answer()
+
+        barbers = load_barbers()
+        barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
+        barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])
+        reply_markup = InlineKeyboardMarkup(barbers_keyboard)
+        query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
+        return BARBER
+
+
+
 
 def service_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    service = query.data.split(':')[1]
-    context.user_data['client_info']['service'] = service
+    data = query.data
+    if data == "confirm_services":
+        # Ações para quando o botão "Confirmar serviços" é pressionado
+        query.answer()
+        return RETURN_TIME  # ou qualquer próximo estado
+    else:
+        service_id = int(data.split(':')[1])
+        if 'services' not in context.user_data['client_info']:
+            context.user_data['client_info']['services'] = []
+        context.user_data['client_info']['services'].append(service_id)
+        query.answer("Serviço adicionado!")
+        return SERVICE
 
-    query.edit_message_text(f"Serviço selecionado: {service}\nDigite a data do último corte (AAAA-MM-DD):")
-    return LAST_CUT_DATE
+ 
 
 def add_service(update: Update, context: CallbackContext) -> int:
     update.message.reply_text("Por favor, envie o nome do serviço.")
@@ -186,7 +213,7 @@ def load_services():
 def birthday_handler(update: Update, context: CallbackContext):
     birthday = update.message.text
     context.user_data['client_info']['birthday'] = birthday
-    update.message.reply_text(f"Data de nascimento registrada: {birthday}\nDigite o telefone do cliente:")
+    update.message.reply_text("Digite o telefone do cliente:")
     return PHONE
 
 def add_barber(update: Update, context: CallbackContext):
@@ -429,16 +456,38 @@ def filter_return_time_input(update: Update, context: CallbackContext):
 
     return ConversationHandler.END
 
+def filter_name_input(update: Update, context: CallbackContext):
+    user_data = context.user_data
+    query = update.message.text
+    logger.info(f"Procurando por: {query}")
+
+    with open('clients.json', 'r') as f:
+        data = json.load(f)
+
+    # Busque o cliente pelo nome
+    clients = [client for client in data['clients'] if query in client['name']]
+
+    if not clients:
+        update.message.reply_text("Nenhum cliente encontrado.")
+    else:
+        response = "Clientes encontrados:\n\n"
+        for client in clients:
+            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
+
+        update.message.reply_text(response)
+
+    return ConversationHandler.END
+
 def main():
     logging.basicConfig(level=logging.INFO)
     updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
+    # Crie o ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
             CommandHandler('add_client', add_client),
-            CallbackQueryHandler(add_client, pattern="cadastrar"),
             CallbackQueryHandler(filter_by_name, pattern="filter_name"),
             CallbackQueryHandler(filter_by_phone, pattern="filter_phone"),
             CallbackQueryHandler(filter_by_service, pattern="filter_service"),
@@ -480,16 +529,20 @@ def main():
                 MessageHandler(Filters.text, barber_birthday_handler),
             ],
         },
-        fallbacks=[],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # Adicione o ConversationHandler ao dispatcher
     dp.add_handler(conv_handler)
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("addclient", add_client))
+    
+    # Adicione os outros handlers
     dp.add_handler(CommandHandler("checkreturns", check_returns))
 
+    # Inicie o bot
     updater.start_polling()
     updater.idle()
+
+
 
 if __name__ == "__main__":
     main()
