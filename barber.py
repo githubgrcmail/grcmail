@@ -1,535 +1,303 @@
-import logging
-import json
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, CallbackQueryHandler
-from telegram.ext import ConversationHandler
-from telegram.ext import ConversationHandler, Filters
-import uuid
-import logging
-import os
-
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-TELEGRAM_TOKEN = "6128472055:AAFJTQjSxd2pM4PQL2DWb7rua6WuTSihpuk"
-FILTER_NAME_INPUT = 99
-FILTER_PHONE_INPUT = 100
-FILTER_SERVICE_INPUT = 101
-FILTER_RETURN_TIME_INPUT = 102
-NAME, PHONE, RETURN_TIME, FILTER_NAME_INPUT, FILTER_PHONE_INPUT, FILTER_SERVICE_INPUT, FILTER_RETURN_TIME_INPUT = range(7)
-ADD_SERVICE, ADD_BARBER, BARBER_NAME, BARBER_PHONE, BARBER_BIRTHDAY = range(103, 108)
-ADD_SERVICE_NAME = 7
-# Constante de estado
-SERVICE = 3
-BARBER = 6
-BIRTHDAY = 7
-LAST_CUT_DATE = 8
-USER_DATA_V2 = "user_data_v2"
-
-
-
-# Inicializa o arquivo de dados dos clientes
-data_file = "clients_data.json"
-
-def save_data(clients_data):
-    with open(data_file, "w") as f:
-        json.dump(clients_data, f, ensure_ascii=False, indent=4)
-
-def load_data():
-    try:
-        with open(data_file, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-clients_data = load_data()
-
-#---------------------Funções do Inicio---------------------#
-
-def start(update: Update, context: CallbackContext):
-    keyboard = [
-        [
-            
-            InlineKeyboardButton("Cadastrar", callback_data="add_client"),
-            InlineKeyboardButton("Filtrar por nome", callback_data='filter_name'),
-            InlineKeyboardButton("Filtrar por telefone", callback_data='filter_phone'),
-        ],
-        [
-            InlineKeyboardButton("Filtrar por serviço", callback_data='filter_service'),
-            InlineKeyboardButton("Filtrar por tempo de retorno", callback_data='filter_return_time'),
-        ],
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    update.message.reply_text("Por favor, escolha uma opção:", reply_markup=reply_markup)
-
-
-def add_client(update: Update, context: CallbackContext):
-    update.message.reply_text("Vamos cadastrar um novo cliente. Digite o nome do cliente:")
-    client_id = uuid.uuid4().hex
-    registration_date = datetime.now().strftime('%Y-%m-%d')
-    context.user_data['client_info'] = {'id': client_id, 'registration_date': registration_date}
-    return NAME
-
-
-def check_returns(update: Update, context: CallbackContext):
-    clients_to_contact = []
-
-    for client_id, client_data in clients_data.items():
-        last_visit = datetime.strptime(client_data["last_visit"], "%Y-%m-%dT%H:%M:%S.%f")
-        return_date = last_visit + timedelta(days=client_data["return_days"])
-
-        if datetime.now() >= return_date:
-            clients_to_contact.append(client_data)
-
-    if clients_to_contact:
-        message = "Clientes para entrar em contato para agendamento:\n"
-        for client in clients_to_contact:
-            message += f"{client['name']} ({client['phone']})\n"
-        update.message.reply_text(message)
-    else:
-        update.message.reply_text("Nenhum cliente para entrar em contato no momento.")
-
-#---------------------Funções de Cadastro---------------------#
-
-def name_handler(update: Update, context: CallbackContext):
-    name = update.message.text
-    context.user_data['client_info']['name'] = name
-    update.message.reply_text("Digite a data de aniversário do cliente:")
-    return BIRTHDAY
-
-def phone_handler(update: Update, context: CallbackContext):
-    phone = update.message.text
-    context.user_data['client_info']['phone'] = phone
-
-    barbers = load_barbers()
-    barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")] for barber in barbers]
-    barbers_keyboard.append([InlineKeyboardButton("Confirmar barbeiro", callback_data="confirm_barber")])  # Adicione esta linha
-    reply_markup = InlineKeyboardMarkup(barbers_keyboard)
-    update.message.reply_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
-    return BARBER
-
-def load_barbers():
-    try:
-        with open('barbers.json', 'r') as f:
-            barbers = json.load(f)
-    except FileNotFoundError:
-        barbers = []
-
-    return barbers
-def barber_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    callback_data = query.data
-
-    barber_id = int(callback_data.split(':')[1])
-    context.user_data['client_info']['barber_id'] = barber_id
-    print(f"Barber ID saved: {context.user_data['client_info']['barber_id']}")
-    query.answer()
-
-    barbers = load_barbers()
-    print(f"Loaded barbers: {barbers}")  # log loaded barbers
-
-    if barber_id not in [barber['id'] for barber in barbers]:
-        query.edit_message_text("O barbeiro selecionado não está mais disponível. Por favor, selecione outro barbeiro.")
-        barbers_keyboard = [[InlineKeyboardButton(barber['name'], callback_data=f"barber:{barber['id']}")]
-                            for barber in barbers]
-        reply_markup = InlineKeyboardMarkup(barbers_keyboard)
-        query.edit_message_text("Selecione o barbeiro do cliente e confirme:", reply_markup=reply_markup)
-        print("Returning to barber selection state")
-        return BARBER
-
-    services = load_services()
-    print(f"Loaded services: {services}")  # log loaded services
-
-    services_keyboard = [[InlineKeyboardButton(service['name'], callback_data=f"service:{service['id']}")]
-                         for service in services]
-    services_keyboard.append([InlineKeyboardButton("Confirmar serviço(s)", callback_data="confirm_service")])
-    reply_markup = InlineKeyboardMarkup(services_keyboard)
-    query.edit_message_text("Selecione o(s) serviço(s) do cliente e confirme:", reply_markup=reply_markup)
-    print("Moving to service selection state")
-    return SERVICE
-
-
-
-
-
-
-
-
-
-def service_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
-    if data == "confirm_services":
-        # Ações para quando o botão "Confirmar serviços" é pressionado
-        query.answer()
-        return RETURN_TIME  # ou qualquer próximo estado
-    else:
-        service_id = int(data.split(':')[1])
-        if 'services' not in context.user_data['client_info']:
-            context.user_data['client_info']['services'] = []
-        context.user_data['client_info']['services'].append(service_id)
-        query.answer("Serviço adicionado!")
-        return SERVICE
-
-def add_service(update: Update, context: CallbackContext) -> int:
-    update.message.reply_text("Por favor, envie o nome do serviço.")
-    return ADD_SERVICE
-def save_service(update: Update, context: CallbackContext) -> int:
-    service_name = update.message.text
-    context.user_data['service_info'] = {'name': service_name, 'id': str(uuid.uuid4())} # gerando um UUID para o campo 'id'
-    save_service_info(context.user_data['service_info'])
-    logging.info(f"Adicionando o serviço {service_name}")
-
-    update.message.reply_text(f"Serviço {service_name} adicionado com sucesso.")
-    return ConversationHandler.END
-
-
-def load_services():
-    if os.path.exists('services.json'):
-        with open('services.json', 'r') as f:
-            services = json.load(f)
-            if services:
-                return services
-            else:
-                print("No services found in services.json")
-                return []
-    else:
-        print("services.json not found.")
-        return []
-
-def birthday_handler(update: Update, context: CallbackContext):
-    birthday = update.message.text
-    context.user_data['client_info']['birthday'] = birthday
-    update.message.reply_text("Digite o telefone do cliente:")
-    return PHONE
-
-def add_barber(update: Update, context: CallbackContext):
-    update.message.reply_text("Digite o nome do barbeiro:")
-    return BARBER_NAME
-
-def barber_name_handler(update: Update, context: CallbackContext):
-    name = update.message.text
-    context.user_data['barber_info'] = {'name': name}
-    update.message.reply_text("Digite o número de telefone do barbeiro:")
-    return BARBER_PHONE
-
-def barber_phone_handler(update: Update, context: CallbackContext):
-    phone = update.message.text
-    context.user_data['barber_info']['phone'] = phone
-    update.message.reply_text("Digite a data de aniversário do barbeiro (formato: DD/MM/AAAA):")
-    return BARBER_BIRTHDAY
-
-def barber_birthday_handler(update: Update, context: CallbackContext):
-    birthday = update.message.text
-    context.user_data['barber_info']['birthday'] = birthday
-    save_barber_info(context.user_data['barber_info'])
-    update.message.reply_text("Barbeiro cadastrado com sucesso!")
-    return ConversationHandler.END
-
-def save_barber_info(info):
-    try:
-        with open('barbers.json', 'r') as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                data = []
-    except FileNotFoundError:
-        data = []
-
-    if data:
-        barber_id = max([barber.get("id", 0) for barber in data]) + 1
-    else:
-        barber_id = 1
-
-    info["id"] = barber_id
-    data.append(info)
-
-    with open('barbers.json', 'w') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def save_service_info(service_info: dict) -> None:
-    try:
-        with open('services.json', 'r') as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                logging.warning("JSONDecodeError, criando uma nova lista de serviços")
-                data = {"services": []}  # Inicializando "services" como uma lista
-    except FileNotFoundError:
-        logging.warning("services.json não encontrado, criando um novo arquivo")
-        data = {"services": []}  # Inicializando "services" como uma lista
-
-    # Gerando um ID único para o serviço
-    if data["services"]:
-        service_id = max([service.get("id", 0) for service in data["services"]]) + 1
-    else:
-        service_id = 1
-
-    service_info['id'] = service_id
-
-    data["services"].append(service_info)  # Adicionando o dicionário do serviço
-
-    with open('services.json', 'w') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        logging.info("Serviço adicionado e arquivo services.json atualizado")
-
-def cancel(update: Update, context: CallbackContext):
-    logging.warning("Função cancel chamada")
-    user = update.effective_user
-    update.message.reply_text("Operação cancelada.")
-    return ConversationHandler.END
-
-def return_time_handler(update: Update, context: CallbackContext):
-    return_time = int(update.message.text)
-    context.user_data['client_info']['return_time'] = return_time
-    save_client_info(context.user_data['client_info'])
-    update.message.reply_text("Cliente cadastrado com sucesso!")
-    return ConversationHandler.END
-
-def last_cut_date_handler(update: Update, context: CallbackContext):
-    last_cut_date = update.message.text
-    context.user_data['client_info']['last_cut_date'] = last_cut_date
-
-    # continue the flow
-    update.message.reply_text("Digite a data de retorno:")
-    return RETURN_TIME
-
-#---------------------Fim de Cadastro---------------------#
-
-def save_client_info(client_info):
-    client_info["id"] = str(uuid.uuid4())
-    client_info["registration_datetime"] = str(datetime.now())
-
-    with open("clients.json", "r+") as f:
-        data = json.load(f)
-        data["clients"].append(client_info)
-        f.seek(0)
-        json.dump(data, f, indent=4)
-
-def show_main_menu(update: Update, context: CallbackContext):
-    menu_keyboard = [
-        [InlineKeyboardButton("Cadastrar", callback_data="add_client")],
-        [InlineKeyboardButton("Cadastrar Barbeiro", callback_data="add_barber")],
-        [InlineKeyboardButton("Cadastrar Serviço", callback_data="add_service")],
-        [InlineKeyboardButton("Filtrar por Nome", callback_data="filter_name")],
-        [InlineKeyboardButton("Filtrar por Telefone", callback_data="filter_phone")],
-        [InlineKeyboardButton("Filtrar por Serviço", callback_data="filter_service")],
-        [InlineKeyboardButton("Filtrar por Tempo de Retorno", callback_data="filter_return_time")]
-    ]
-    reply_markup = InlineKeyboardMarkup(menu_keyboard)
-    update.message.reply_text("Selecione uma opção:", reply_markup=reply_markup)
-
-
-#---------------------Filtros---------------------#
-
-def filter_by_name(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
+//+------------------------------------------------------------------+
+//|                                                      SMT.mq5     |
+//|                                              Geilson Santana     |
+//|                                               @geilson_minas     |
+//+------------------------------------------------------------------+
+#property copyright "Geilson Santana"
+#property link      "@geilson_minas"
+#property version   "1.00"
+#property strict
+
+// Parâmetros de entrada
+input string Symbol1 = "EURUSD#";
+input string Symbol2 = "USDX.a";
+input ENUM_TIMEFRAMES TimeFrame1 = PERIOD_M5;
+input ENUM_TIMEFRAMES TimeFrame2 = PERIOD_M15;
+input ENUM_TIMEFRAMES TimeFrame3 = PERIOD_M30;
+input bool isTimeFrame1Active = true; // Ativa/desativa o timeframe 1
+input bool isTimeFrame2Active = true; // Ativa/desativa o timeframe 2
+input bool isTimeFrame3Active = true; // Ativa/desativa o timeframe 3
+input int Periods = 14;
+input double CorrelationThreshold = -98;
+
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+    // Aqui verificamos cada booleana para desenhar suporte e resistência para cada timeframe
+    if(isTimeFrame1Active)
+    {
+        DrawSupportAndResistance(Symbol1, TimeFrame1);
+        DrawSupportAndResistance(Symbol2, TimeFrame1);
+    }
+    if(isTimeFrame2Active)
+    {
+        DrawSupportAndResistance(Symbol1, TimeFrame2);
+        DrawSupportAndResistance(Symbol2, TimeFrame2);
+    }
+    if(isTimeFrame3Active)
+    {
+        DrawSupportAndResistance(Symbol1, TimeFrame3);
+        DrawSupportAndResistance(Symbol2, TimeFrame3);
+    }
+
+    // Calcular a correlação e a variação de preço para cada timeframe
+    double Correlation1, Correlation2, Correlation3;
+    double change1_symbol1, change1_symbol2, change2_symbol1, change2_symbol2, change3_symbol1, change3_symbol2;
+
+    if(isTimeFrame1Active)
+    {
+        Correlation1 = CalculateCorrelation(Symbol1, Symbol2, TimeFrame1, Periods);
+        change1_symbol1 = iClose(Symbol1, TimeFrame1, 0) - iClose(Symbol1, TimeFrame1, 1);
+        change1_symbol2 = iClose(Symbol2, TimeFrame1, 0) - iClose(Symbol2, TimeFrame1, 1);
+    }
+
+    if(isTimeFrame2Active)
+    {
+        Correlation2 = CalculateCorrelation(Symbol1, Symbol2, TimeFrame2, Periods);
+        change2_symbol1 = iClose(Symbol1, TimeFrame2, 0) - iClose(Symbol1, TimeFrame2, 1);
+        change2_symbol2 = iClose(Symbol2, TimeFrame2, 0) - iClose(Symbol2, TimeFrame2, 1);
+    }
+
+    if(isTimeFrame3Active)
+    {
+        Correlation3 = CalculateCorrelation(Symbol1, Symbol2, TimeFrame3, Periods);
+        change3_symbol1 = iClose(Symbol1, TimeFrame3, 0) - iClose(Symbol1, TimeFrame3, 1);
+        change3_symbol2 = iClose(Symbol2, TimeFrame3, 0) - iClose(Symbol2, TimeFrame3, 1);
+    }
+
+    // Verificar se há divergências em todos os timeframes ativos
+    bool isDivergenceDetected = false;
+
+    if(isTimeFrame1Active && Correlation1 * 100 <= CorrelationThreshold && change1_symbol1 * change1_symbol2 > 0)
+        isDivergenceDetected = true;
+    if(isTimeFrame2Active && Correlation2 * 100 <= CorrelationThreshold && change2_symbol1 * change2_symbol2 > 0)
+        isDivergenceDetected = true;
+    if(isTimeFrame3Active && Correlation3 * 100 <= CorrelationThreshold && change3_symbol1 * change3_symbol2 > 0)
+        isDivergenceDetected = true;
     
-    query.edit_message_text("Digite o nome que deseja buscar:")
-    return FILTER_NAME_INPUT  # Altere esta linhadef filter_name_input(update: Update, context: CallbackContext):
-    user_data = context.user_data
-    query = update.message.text
-    logger.info(f"Procurando por: {query}")
+    if (isDivergenceDetected)
+    {
+        Print("Divergência detectada em um dos timeframes ativos para ", Symbol1, " e ", Symbol2);
+        
+        // Adicione sua lógica para agir sobre o sinal SMT aqui
+        
+        if(isTimeFrame1Active)
+        {
+            DrawFibo(Symbol1, TimeFrame1);
+            DrawFibo(Symbol2, TimeFrame1);
+        }
+        if(isTimeFrame2Active)
+        {
+            DrawFibo(Symbol1, TimeFrame2);
+            DrawFibo(Symbol2, TimeFrame2);
+        }
+        if(isTimeFrame3Active)
+        {
+            DrawFibo(Symbol1, TimeFrame3);
+            DrawFibo(Symbol2, TimeFrame3);
+        }
+    }
+  }
 
-    with open('clients.json', 'r') as f:
-        data = json.load(f)
+// (O resto do seu código permanece inalterado)
 
-    # Busque o cliente pelo nome
-    clients = [client for client in data['clients'] if query.lower() in client['name'].lower()]
 
-    # Log para verificar os clientes encontrados
-    logger.info(f"Clientes encontrados: {clients}")
-
-    if not clients:
-        update.message.reply_text("Nenhum cliente encontrado.")
-    else:
-        response = "Clientes encontrados:\n\n"
-        for client in clients:
-            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
-
-        update.message.reply_text(response)
-
-    return ConversationHandler.END
-
-def filter_by_phone(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text("Digite o número de telefone que deseja buscar:")
-    return FILTER_PHONE_INPUT
-
-def filter_by_service(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text("Digite o serviço que deseja buscar:")
-    return FILTER_SERVICE_INPUT
-
-def filter_by_return_time(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text("Digite o tempo de retorno que deseja buscar:")
-    return FILTER_RETURN_TIME_INPUT
-
-def filter_phone_input(update: Update, context: CallbackContext):
-    user_data = context.user_data
-    query = update.message.text
-    logger.info(f"Procurando por: {query}")
-
-    with open('clients.json', 'r') as f:
-        data = json.load(f)
-
-    # Busque o cliente pelo telefone
-    clients = [client for client in data['clients'] if query in client['phone']]
-
-    if not clients:
-        update.message.reply_text("Nenhum cliente encontrado.")
-    else:
-        response = "Clientes encontrados:\n\n"
-        for client in clients:
-            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
-
-        update.message.reply_text(response)
-
-    return ConversationHandler.END
-
-def filter_service_input(update: Update, context: CallbackContext):
-    user_data = context.user_data
-    query = update.message.text
-    logger.info(f"Procurando por: {query}")
-
-    with open('clients.json', 'r') as f:
-        data = json.load(f)
-
-    # Busque o cliente pelo serviço
-    clients = [client for client in data['clients'] if query.lower() in client['service'].lower()]
-
-    if not clients:
-        update.message.reply_text("Nenhum cliente encontrado.")
-    else:
-        response = "Clientes encontrados:\n\n"
-        for client in clients:
-            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
-
-        update.message.reply_text(response)
-
-    return ConversationHandler.END
-
-def filter_return_time_input(update: Update, context: CallbackContext):
-    user_data = context.user_data
-    query = int(update.message.text)
-    logger.info(f"Procurando por: {query}")
-
-    with open('clients.json', 'r') as f:
-        data = json.load(f)
-
-    # Busque o cliente pelo tempo de retorno
-    clients = [client for client in data['clients'] if query == client['return_time']]
-
-    if not clients:
-        update.message.reply_text("Nenhum cliente encontrado.")
-    else:
-        response = "Clientes encontrados:\n\n"
-        for client in clients:
-            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
-
-        update.message.reply_text(response)
-
-    return ConversationHandler.END
-
-def filter_name_input(update: Update, context: CallbackContext):
-    user_data = context.user_data
-    query = update.message.text
-    logger.info(f"Procurando por: {query}")
-
-    with open('clients.json', 'r') as f:
-        data = json.load(f)
-
-    # Busque o cliente pelo nome
-    clients = [client for client in data['clients'] if query in client['name']]
-
-    if not clients:
-        update.message.reply_text("Nenhum cliente encontrado.")
-    else:
-        response = "Clientes encontrados:\n\n"
-        for client in clients:
-            response += f"{client['name']}\nTelefone: {client['phone']}\nServiço: {client['service']}\nTempo de retorno: {client['return_time']} dias\n\n"
-
-        update.message.reply_text(response)
-
-    return ConversationHandler.END
-
-def main():
-    logging.basicConfig(level=logging.INFO)
-    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    # Crie o ConversationHandler
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler('start', start),
-            CommandHandler('add_client', add_client),
-            CommandHandler("addservice", add_service),
-            CommandHandler("addbarber", add_barber),
-            CommandHandler("cancel", cancel),
-            CallbackQueryHandler(filter_by_name, pattern="filter_name"),
-            CallbackQueryHandler(filter_by_phone, pattern="filter_phone"),
-            CallbackQueryHandler(filter_by_service, pattern="filter_service"),
-            CallbackQueryHandler(filter_by_return_time, pattern="filter_return_time")
-          
-        ],
-        states={
-            NAME: [MessageHandler(Filters.text, name_handler)],
-            BIRTHDAY: [MessageHandler(Filters.text, birthday_handler)],
-            PHONE: [MessageHandler(Filters.text, phone_handler)],
-            BARBER: [CallbackQueryHandler(barber_handler)],
-            SERVICE: [CallbackQueryHandler(service_handler)],
-            LAST_CUT_DATE: [MessageHandler(Filters.text, last_cut_date_handler)],
-            RETURN_TIME: [MessageHandler(Filters.text, return_time_handler)],
-            
-            
-            
-            FILTER_NAME_INPUT: [
-                MessageHandler(Filters.text, filter_name_input)
-            ],
-            FILTER_PHONE_INPUT: [
-                MessageHandler(Filters.text, filter_phone_input)
-            ],
-            FILTER_SERVICE_INPUT: [
-                MessageHandler(Filters.text, filter_service_input)
-            ],
-            FILTER_RETURN_TIME_INPUT: [
-                MessageHandler(Filters.text, filter_return_time_input)
-            ],
-            ADD_SERVICE: [
-                MessageHandler(Filters.text, save_service),
-            ],
-            BARBER_NAME: [
-                MessageHandler(Filters.text, barber_name_handler),
-            ],
-            BARBER_PHONE: [
-                MessageHandler(Filters.text, barber_phone_handler),
-            ],
-            BARBER_BIRTHDAY: [
-                MessageHandler(Filters.text, barber_birthday_handler),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    # Adicione o ConversationHandler ao dispatcher
-    dp.add_handler(conv_handler)
+double CalculateCorrelation(string symbol1, string symbol2, ENUM_TIMEFRAMES timeframe, int periods)
+{
+    double price1[];
+    double price2[];
     
-    # Adicione os outros handlers
-    dp.add_handler(CommandHandler("checkreturns", check_returns))
+    CopyClose(symbol1, timeframe, 0, periods, price1);
+    CopyClose(symbol2, timeframe, 0, periods, price2);
+    
+    double mean1 = MathMean(price1);
+    double mean2 = MathMean(price2);
+    
+    double variance1 = MathVariance(price1, mean1);
+    double variance2 = MathVariance(price2, mean2);
+    
+    double covariance = MathCovariance(price1, price2, mean1, mean2);
+    
+    double correlation = covariance / MathSqrt(variance1 * variance2);
+    
+    return correlation;
+}
 
-    # Inicie o bot
-    updater.start_polling()
-    updater.idle()
+double MathMean(double& array[])
+{
+    int len = ArraySize(array);
+    double sum = 0;
+    for(int i=0; i<len; i++)
+    {
+        sum += array[i];
+    }
+    return sum/len;
+}
 
+double MathVariance(double& array[], double mean)
+{
+    int len = ArraySize(array);
+    double sum = 0;
+    
+    for(int i=0; i<len; i++)
+    {
+        sum += MathPow(array[i] - mean, 2);
+    }
+    return sum/len;
+}
 
+double MathCovariance(double& array1[], double& array2[], double mean1, double mean2)
+{
+    int len = ArraySize(array1);
+    double sum = 0;
+    
+    for(int i=0; i<len; i++)
+    {
+        sum += (array1[i] - mean1) * (array2[i] - mean2);
+    }
+    return sum/len;
+}
 
-if __name__ == "__main__":
-    main()
+//+------------------------------------------------------------------+
+
+void DrawSupportAndResistance(string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    MqlRates rates[];
+    int copied = CopyRates(symbol, timeframe, 0, 14, rates);
+    
+    if(copied > 0)
+    {
+        double highestHigh = rates[0].high;
+        double lowestLow = rates[0].low;
+        datetime highestHighTime = rates[0].time;
+        datetime lowestLowTime = rates[0].time;
+        
+        for(int i=0; i<copied; i++)
+        {
+            if(rates[i].high > highestHigh)
+            {
+                highestHigh = rates[i].high;
+                highestHighTime = rates[i].time;
+            }
+            
+            if(rates[i].low < lowestLow)
+            {
+                lowestLow = rates[i].low;
+                lowestLowTime = rates[i].time;
+            }
+        }
+        
+        string resistanceLineName = symbol + "_resistance";
+        string supportLineName = symbol + "_support";
+        
+        ObjectCreate(0, resistanceLineName, OBJ_HLINE, 0, 0, highestHigh);
+        ObjectCreate(0, supportLineName, OBJ_HLINE, 0, 0, lowestLow);
+        
+        ObjectSetInteger(0, resistanceLineName, OBJPROP_COLOR, clrRed);
+        ObjectSetInteger(0, supportLineName, OBJPROP_COLOR, clrGreen);
+    }
+    else
+    {
+        Print("Error copying rates. Error code: ", GetLastError());
+    }
+}
+
+void DrawFibo(string symbol, ENUM_TIMEFRAMES timeframe)
+{
+    MqlRates rates[];
+    int copied = CopyRates(symbol, timeframe, 0, 14, rates);
+
+    if(copied > 0)
+    {
+        double highestHigh = rates[0].high;
+        double lowestLow = rates[0].low;
+        datetime highestHighTime = rates[0].time;
+        datetime lowestLowTime = rates[0].time;
+
+        for(int i=0; i<copied; i++)
+        {
+            if(rates[i].high > highestHigh)
+            {
+                highestHigh = rates[i].high;
+                highestHighTime = rates[i].time;
+            }
+            
+            if(rates[i].low < lowestLow)
+            {
+                lowestLow = rates[i].low;
+                lowestLowTime = rates[i].time;
+            }
+        }
+        
+        string fiboName = symbol + "_fibo";
+
+        if(highestHighTime > lowestLowTime) // if the high is more recent
+        {
+            if(ObjectCreate(0, fiboName, OBJ_FIBO, 0, lowestLowTime, lowestLow, highestHighTime, highestHigh))
+            {
+                for(int i = 0; i < 23; i++)
+                {
+                    ObjectSetInteger(0, fiboName, OBJPROP_LEVELCOLOR, i, clrWhite);
+                }
+            }
+            else
+            {
+                Print("Erro ao criar o objeto Fibonacci. Código do erro: ", GetLastError());
+            }
+        }
+        else // if the low is more recent
+        {
+            if(ObjectCreate(0, fiboName, OBJ_FIBO, 0, highestHighTime, highestHigh, lowestLowTime, lowestLow))
+            {
+                for(int i = 0; i < 23; i++)
+                {
+                    ObjectSetInteger(0, fiboName, OBJPROP_LEVELCOLOR, i, clrWhite);
+                }
+            }
+            else
+            {
+                Print("Erro ao criar o objeto Fibonacci. Código do erro: ", GetLastError());
+            }
+        }
+
+        // Calculate and print Fibonacci levels
+        double high = highestHigh;
+        double low = lowestLow;
+        double levelPrices[6];
+         
+        levelPrices[0] = low; // 0% level 
+        levelPrices[1] = high - 0.236 * (high - low); // 23.6% level
+        levelPrices[2] = high - 0.382 * (high - low); // 38.2% level
+        levelPrices[3] = high - 0.500 * (high - low); // 50% level
+        levelPrices[4] = high - 0.618 * (high - low); // 61.8% level
+        levelPrices[5] = high; // 0% level
+
+        for(int i = 0; i < 6; i++)
+        {
+            Print("Fibonacci level ", i, " price: ", levelPrices[i]);
+        }
+    }
+    else
+    {
+        Print("Erro ao copiar as taxas. Código do erro: ", GetLastError());
+    }
+}
